@@ -1,0 +1,10 @@
+pygame examples: https://github.com/Rabbid76/PyGameExamplesAndAnswers/blob/master/documentation/pygame/pygame_collision_and_intesection.md
+example website: https://phet.colorado.edu/sims/html/gas-properties/latest/gas-properties_all.html
+collisions: https://stackoverflow.com/questions/29640685/how-do-i-detect-collision-in-pygame
+collisions 2: https://github.com/rafael-fuente/Ideal-Gas-Simulation-To-Verify-Maxwell-Boltzmann-distribution/blob/master/Ideal%20Gas%20simulation%20code.py
+angle: https://stackoverflow.com/questions/35176451/python-code-to-calculate-angle-between-three-point-using-their-3d-coordinates
+H2O2 Ea: https://chem.libretexts.org/Ancillary_Materials/Demos_Techniques_and_Experiments/Lecture_Demonstrations/Additional_Demos/The_Catalytic_Decomposition_of_Hydrogen_Peroxide
+Ea probability: https://xaktly.com/Arrhenius.html
+Ea relative: https://chem.libretexts.org/Courses/University_of_Toronto/Chemistry%3A_Physical_Principles/06%3A_Kinetics/6.05%3A_Collision_Theory_Activation_Energy_and_the_Arrhenius_Equation
+ChatGPT – an easier solution for complex code problems that you’d otherwise spend hours on StackOverflow trying to find the answer to. Says that it cites R. D. Levine & R. B. Bernstein — Molecular Reaction Dynamics and Chemical Reactivity (1987) for the relative energy of three particles.
+Image of shrugger by cookie_studio on Freepik, https://www.freepik.com/free-photo/unbothered-relaxed-young-man-shrugging-throw-hands-smirk-indecisive-dont-know-answer-cant-tell-you-anything-careless-about-topic-conversation-standing-white-background-big-deal_24799773.htm (...brilliant name for a stock image)
