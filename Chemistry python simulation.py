@@ -77,14 +77,14 @@ def valencyBondDifferenceCalc(LAI, bonds):
 
 class substanceGen(pg.sprite.Sprite):  #class for chemical substance
     def __init__(self, substanceParams):   #sets up the atom / molecule
-        # substanceParams = [[substanceType, atomNumber, x, y, xdir, ydir, substanceID, angleStartPos, rotationDirection, frameN, recentColl, frameWidth, productPair, velocityDisplayScale, centralAtom, iterations, substanceTypeInSubstances?],
-            #[name, colour, radius, mass], ...] #properties of (proposed) new atom / molecule
+        # substanceParams = [[substanceType, atomNumber, x, y, xdir, ydir, substanceID, angleStartPos, rotationDirection, frameN, recentColl, frameWidth, velocityDisplayScale, centralAtom, iterations, substanceTypeInSubstances?,
+            #boxes], [name, colour, radius, mass], ...] = properties of (proposed) new atom / molecule
         pg.sprite.Sprite.__init__(self)  #functioning code
         screen = pg.display.get_surface() #get screen
         self.substanceType = substanceParams["molecule"]["substanceType"]  #F2, H2, N2, O2, Ne, NO..
         self.atomNumber = substanceParams["molecule"]["atomNumber"] #number of atoms in substance
         self.velocity = pg.math.Vector2(substanceParams["molecule"]["xdir"], substanceParams["molecule"]["ydir"])
-        self.substanceID = substanceParams["molecule"]["substanceID"]
+        self.substanceID = substanceParams["molecule"]["substanceID"] #note that substanceID is 1, 2... corresponding to the count of the substance as opposed to python's ID of the object (which is e.g. 2525047141904)
         ePairPosTerms = ["type", "order", "IDs", "angle"]
         self.mass = 0
         self.atomMasses = []
@@ -134,11 +134,11 @@ class substanceGen(pg.sprite.Sprite):  #class for chemical substance
                 self.angleDisp = [startingAngle, random.choice([-1, 1])] #second number is direction of rotation
             else:
                 self.angleDisp = [startingAngle, substanceParams["molecule"]["rotationDirection"]]
-            self.surfaceDimensions = pg.math.Vector2(self.radius * 10, self.radius * 10) #larger surfaceDImensions to account for rotation
+            self.surfaceDimensions = pg.math.Vector2(self.radius * 10, self.radius * 10) #larger surfaceDimensions to account for rotation
             self.image = pg.Surface((self.surfaceDimensions), pg.SRCALPHA)
             self.com = pg.math.Vector2(self.surfaceDimensions / 2) #rotation around 'centre of mass'
             if self.atomNumber == 2:
-                l1 = (self.atomMasses[1] * (self.atomRadii[0] + self.atomRadii[1])) / (self.atomMasses[0] + self.atomMasses[1]) #l1 = r1 when m1r1 = m2r2, along the C∞ axis r1+r2 
+                l1 = (self.atomMasses[1] * (self.atomRadii[0] + self.atomRadii[1])) / (self.atomMasses[0] + self.atomMasses[1]) #l1 = distance between atom 1 and molecule's centre of mass when m1l1 = m2l2, along the C∞ axis. 0.6(r1+r2)=bond length 
                 self.imageAtomCentres = [self.com - (pg.math.Vector2(0, l1)) * 0.6, self.com + (pg.math.Vector2(0, self.atomRadii[0]
                                                                                 + self.atomRadii[1] - l1)* 0.6)] #at 0º angle (no rotation), imageAtomCentres[0] is vertically above imageAtomCentres[1], 0.6 used to adjust atom separation to be more visually realistic
                 self.relAtomCentres = [pg.math.Vector2(0, -l1), pg.math.Vector2(0, self.atomRadii[0] + self.atomRadii[1] - l1)]
@@ -195,7 +195,9 @@ class substanceGen(pg.sprite.Sprite):  #class for chemical substance
         #for atom in self.LAI:
         #    print("atom "+str(atom["atom"])+" ID "+str(atom["ID"])+" ePairPos "+str(atom["ePairPos"]))
         self.rect = self.image.get_rect(center = (substanceParams["molecule"]["x"], substanceParams["molecule"]["y"]))
-        self.willReact = 0 #once a reaction is detected, this is assigned to the substanceID of the substance(s) that this substance will react with, or just "uni" if it will undergo a unimolecular reaction
+        self.combinedRect = self.rect.union(self.image.get_rect(center = self.reactingPos)) #makes a big rect object covering both the current and next frame positions
+        self.currentBoxes = [i for i, box in enumerate(substanceParams["molecule"]["boxes"]) if self.combinedRect.colliderect(box)]
+        self.willReact = set() #once a reaction is detected, this is assigned to the substanceID of the substance(s) that this substance will react with, or just "uni" if it will undergo a unimolecular reaction
         self.currentColl = [] #only used to check current colls between non-reacting atoms (not used for reactions)
         self.recentColl = substanceParams["molecule"]["recentColl"]
         self.recentCollPrevious = [] #stores recentColl for the most recent 10 frames
@@ -204,9 +206,8 @@ class substanceGen(pg.sprite.Sprite):  #class for chemical substance
         self.startingFrame = substanceParams["molecule"]["frameN"] #frame when rotation begins
         self.product = ""
         self.reactingFrame = 0
-        self.productPair = substanceParams["molecule"]["productPair"] #substanceID of other molecule created during rxn
 
-    def addAtom(self, key, atom):
+    def addAtom(self, key, atom): #adds atom info to self
         self.atomInfo.append({"atom": key, **atom})
         self.atomInfo[-1]["charge"], self.atomInfo[-1]["role"], self.atomInfo[-1]["remainingValence"], self.atomInfo[-1]["vBD"] =\
                                      0, "outer", self.atomInfo[-1]["valence"], 0 #role = central or outer atom
@@ -215,7 +216,7 @@ class substanceGen(pg.sprite.Sprite):  #class for chemical substance
             self.atomRadii.append(atom["radius"])
             self.atomMasses.append(atom["Ar"])
             self.mass += atom["Ar"]
-            self.radius = max(self.radius, atom["radius"])
+            self.radius = max(self.radius, atom["radius"]) #doing this isn't really that accurate, but it provides consistency with the appearance of a collision and the detection of a collision
 
     def LewisChecking(self):
         bonds = []
@@ -270,19 +271,24 @@ class substanceGen(pg.sprite.Sprite):  #class for chemical substance
         self.LewisErrors = [f"{atom['atom']} ({atom['role']}) has {abs(atom['vBD'])} " f"{'excess' if atom['vBD'] > 0 else 'deficient'} "
         f"[{atom['vBD']:+}] valence" for atom in LewisAtomInfo if atom["vBD"] != 0]
         if self.LewisErrors and self.substanceTypeInSubstances == False:
-            print(f"Error in molecule {self.substanceType}: " + ", ".join(self.LewisErrors))
+            if self.atomNumber == 1:
+                print(f"Error in atom {self.substanceType}: " + ", ".join(self.LewisErrors))
+            else:
+                print(f"Error in molecule {self.substanceType}: " + ", ".join(self.LewisErrors))
 
 
-def collCheck(substance1, substance2, collDetected): #sub-function that does atom-atom collision checking
+def collCheck(substance1, substance2): #sub-function that does atom-atom collision checking
 ##    for i2 in range(0, substance1.atomNumber):  #this checks every atom with each other. More accurate but much slower.
 ##        for i3 in range(0, substance2.atomNumber):
 ##            atomCollisionDistance = substance1.atomRadii[i2] + substance2.atomRadii[i3]
 ##            if substance1.reactingAtomCentres[i2].distance_to(substance2.reactingAtomCentres[i3]) < atomCollisionDistance:
 ##                collDetected = 1
-    collisionDistance = substance1.radius + substance2.radius
-    if substance1.reactingPos.distance_to(substance2.reactingPos) < collisionDistance:
-        collDetected = 1
-    return collDetected
+    collisionDistanceSquared = (substance1.radius + substance2.radius)**2
+    for iteration in range(1, substance1.iterations): #starting from 1 as current position was checked during previous frame as the last iteration (equal to the substance's substance.reactingPos)
+       delta = substance1.pos[iteration] - substance2.pos[iteration]
+       if delta.length_squared() < collisionDistanceSquared:
+            return 1 #collision detected
+    return 0 #no collision detected
 
 def getSubstanceAtoms(substanceParams, atomInfo): #gets the constituent atoms and their counts from a substance formula
     substanceParams["molecule"]["atomNumber"]=0 #resetting atom number to 0 in case same substanceParams is passed into this func again
@@ -310,10 +316,39 @@ def getSubstanceAtoms(substanceParams, atomInfo): #gets the constituent atoms an
                 substanceParams["molecule"]["atomNumber"]+=int(atomList[i7][1])
                 substanceParams[symbol]["count"] = int(atomList[i7][1])    
     return substanceParams
+
+def gridGen(physicalParams, physicalParamsFields):
+    dimensions, atomInfo, frameWidth, substanceGenInfo, TStart, avgMr, velocityDisplayScale,\
+        iterations, substanceParamsMoleculeFields, boxes, grid = (physicalParams[i] for i in physicalParamsFields)
+    #generate 1 of every type of substance (not adding these to list of simulation substances), find diameter of each (2*radius), therefore find maximum diameter
+    substanceID = 1
+    largestDiameter = 0 #largest diameter of any possible substance
+    for i in range(0, len(substanceGenInfo)): #for each possible substance
+        x, y, xdir, ydir = 50, 50, 50, 50
+        substanceParams = {"molecule": dict(zip(substanceParamsMoleculeFields, [substanceGenInfo[i]["formula"], 0, x, y, xdir, ydir,
+                                                                            substanceID, "na", "na", 0, set(), frameWidth, velocityDisplayScale, substanceGenInfo[i]["central"], iterations, "False", boxes]))}
+        substanceParams = getSubstanceAtoms(substanceParams, atomInfo)
+        substanceNew = substanceGen(substanceParams)
+        if substanceNew.radius > largestDiameter/2:
+            largestDiameter = substanceNew.radius*2
+    assumedBoxWidth = 1.2*largestDiameter #arbitrary 1.2 scale-up
+    boxLengthwiseCount = math.ceil(dimensions/assumedBoxWidth) #number of boxes spanning one side of the simulation (e.g. if this = 5, the simulation has a grid of 5x5 = 25 boxes)
+    boxes = []
+    for row in range(boxLengthwiseCount):
+        for col in range(boxLengthwiseCount):
+            x = col * assumedBoxWidth #x position of the box = a multiple of the box width (as with y)
+            y = row * assumedBoxWidth
+            actualBoxWidth = min(assumedBoxWidth, dimensions - x) #if the box would overlap with the right or bottom sides of the simulation, the box width is brought down, so that it fits in the simulation
+            actualBoxHeight = min(assumedBoxWidth, dimensions - y)
+            boxes.append(pg.Rect(x, y, actualBoxWidth, actualBoxHeight))
+    grid = {i: [] for i in range(len(boxes))}
+    return boxes, grid
         
-def substanceSetup(dimensions, atomInfo, frameWidth, substanceGenInfo,TStart,avgMr,velocityDisplayScale, iterations, substanceParamsMoleculeFields):
+def substanceSetup(physicalParams, physicalParamsFields):
+    dimensions, atomInfo, frameWidth, substanceGenInfo, TStart, avgMr, velocityDisplayScale,\
+        iterations, substanceParamsMoleculeFields, boxes, grid = (physicalParams[i] for i in physicalParamsFields)
     substances = pg.sprite.Group(())
-    substanceID = 1 #unique ID for each substance on screen. This variable stores the substanceID that will be used for the next substance that is generated.
+    substanceID = 1 #unique ID for each substance on screen. This variable stores the substanceID that will be used for the next substance that is generated. different to python's ID of the object (which is e.g. 2525047141904)
     largestRadius = 0 #largest radius of the atoms in a substance
     avgSpeed = np.sqrt((2 * R * TStart) / (avgMr / 1000))  # m/s
     largestRadius = max(int(atom["radius"]) for atom in atomInfo.values())
@@ -328,16 +363,18 @@ def substanceSetup(dimensions, atomInfo, frameWidth, substanceGenInfo,TStart,avg
                     angle = random.uniform(0, 2 * math.pi) #random angle of direction
                     xdir, ydir = avgSpeed * math.cos(angle), avgSpeed * math.sin(angle)  #random magnitude + direction of x and y travel
                 substanceParams = {"molecule": dict(zip(substanceParamsMoleculeFields, [substanceGenInfo[i]["formula"], 0, x, y, xdir, ydir,
-                                                                                        substanceID, "na", "na", 0, [], frameWidth, 0, velocityDisplayScale, substanceGenInfo[i]["central"], iterations, "False"]))}
+                                                                                        substanceID, "na", "na", 0, set(), frameWidth, velocityDisplayScale, substanceGenInfo[i]["central"], iterations, "False", boxes]))}
                 substanceParams = getSubstanceAtoms(substanceParams, atomInfo)
                 substanceParams["molecule"]["substanceTypeInSubstances?"] =  any(s.substanceType == substanceParams["molecule"]["substanceType"] for s in substances)
                 substanceNew = substanceGen(substanceParams)
-                collDetected = 0
+                collDetectedTotal = 0
                 for substance2 in substances:
-                    collDetected = collCheck(substanceNew, substance2, collDetected)
-                if collDetected == 0:  #if new atom / molecule doesn't collide with any other substance currently present on screen
+                    collDetectedTotal+=collCheck(substanceNew, substance2)
+                if collDetectedTotal == 0:  #if new atom / molecule doesn't collide with any other substance currently present on screen
                     substances.add(substanceNew) #create the new atom / molecule
                     substanceID+=1
+                    for box in substanceNew.currentBoxes:
+                        physicalParams["grid"][box].append(substanceNew)
                     break
                 spawnTries+=1
     return substances, substanceID
@@ -389,6 +426,8 @@ def angleStartFunc(angleStartArgs): #angleStartPos can be 0-12, corresponding to
         elif angle[1] > angle[0]:
             angleStartPos = math.ceil(angle[0] * 6 / math.pi)
         else: #special case where difference in current + next angles don't work (since they give the same angle)
+            if angleStartArgs[1][1][0] - angleStartArgs[0][1][0] == 0:
+                print("angleStartArgs "+str(angleStartArgs))
             multiplier = (positions[0][0][0] - positions[1][0][0])/(angleStartArgs[1][1][0] - angleStartArgs[0][1][0])
             pos2 = [positions[0][0] + (multiplier * angleStartArgs[0][1]), positions[1][0] + (multiplier * angleStartArgs[1][1])] #positions at equal x coordinates when following current velocities
             if pos2[0][1] > pos2[1][1]: #if first atom is above second atom
@@ -405,122 +444,118 @@ def angleStartFunc(angleStartArgs): #angleStartPos can be 0-12, corresponding to
                     angleStartPos = math.floor(angle[0] * 6 / math.pi)
     return angleStartPos, rotationDirection
 
-def reactionProcessing(substances, frameN, substanceID, atomInfo, substance1, substance2, reactionSuccessful, threeSubstanceReaction, velocityDisplayScale, substanceGenInfo,
-                       iterations, substanceParamsMoleculeFields):
-    #print("substance2 "+str(substance2.substanceID)+" willreact "+str(substance2.willReact)+" frame "+str(frameN))
-    for substance3 in substances:
-        if substances.has(substance3):
-            if substance3.willReact == [substance1.substanceID,substance2.substanceID] and frameN == substance3.reactingFrame: #if three substance reaction was successful
-                newx, newy = (substance1.pos[0][0]+substance2.pos[0][0]+substance3.pos[0][0])/3, (substance1.pos[0][1]+substance2.pos[0][1]+substance3.pos[0][1])/3
-                totalmv = (substance1.mass * substance1.velocity) + (substance2.mass * substance2.velocity) + (substance3.mass * substance3.velocity)
-                totalMass = substance1.mass + substance2.mass + substance3.mass
-                reactionCentre = (substance1.mass * np.array(substance1.pos[0]) + substance2.mass * np.array(substance2.pos[0]) + substance3.mass * np.array(substance3.pos[0])) / totalMass
-                reactionSuccessful = 1
-                threeSubstanceReaction = 1
-                thirdSubstance = substance3.substanceID #assigns substanceID of third substance for later
-
-            
-        if substance2.willReact == substance1.substanceID and substance2.reactingFrame == frameN: #if two substance reaction was successful
-            newx, newy = (substance1.pos[0][0]+substance2.pos[0][0])/2, (substance1.pos[0][1]+substance2.pos[0][1])/2
-            totalmv = (substance1.mass * substance1.velocity) + (substance2.mass * substance2.velocity)
-            totalMass = substance1.mass + substance2.mass
-            reactionCentre = (substance1.mass * np.array(substance1.pos[0]) + substance2.mass * np.array(substance2.pos[0])) / totalMass
-            reactionSuccessful = 1
-
-        if reactionSuccessful == 1:
-            productNumber = 0
-            products = [s.strip() for s in substance1.product.split('+') if s.strip()]
-            centralAtom = []
-            for product in products:
-                centralAtom.append(next((row["central"] for row in substanceGenInfo if row["formula"] == product), "-")) #finds central atom if present
-            try:
-                productNumber = int(substance1.product[0]) #number of product molecules
-            except:
-                productNumber = len(products)
-            newVelocity = totalmv / (productNumber * totalMass)
-            newSubstanceRecentColl = []
-            angleStartArgs = [[substance1.pos[0], substance1.velocity], [substance2.pos[0], substance2.velocity]]
-            angleStartPos, rotationDirection = angleStartFunc(angleStartArgs)
-            if productNumber == 1:
-                substanceParams = {"molecule": dict(zip(substanceParamsMoleculeFields, [substance1.product, 0, newx, newy,
-                                                                                        newVelocity[0], newVelocity[1], substanceID, angleStartPos, rotationDirection, frameN,\
-                                                                                        [], substance1.frameWidth, 0, velocityDisplayScale, centralAtom[0], iterations, "False"]))}
-                substanceParams = getSubstanceAtoms(substanceParams, atomInfo)
-                substanceParams["molecule"]["substanceTypeInSubstances?"] =  any(s.substanceType == substanceParams["molecule"]["substanceType"] for s in substances)               
+def reactionProcessing(substance1, substance2,reactionSuccessful, threeSubstanceReaction, physicalParams, physicalParamsFields, simulationParams, simulationParamsFields):
+    dimensions, atomInfo, frameWidth, substanceGenInfo, TStart, avgMr, velocityDisplayScale,\
+                 iterations, substanceParamsMoleculeFields, boxes, grid = (physicalParams[i] for i in physicalParamsFields)
+    substances, toggleReaction, frameN, substanceID, reactionInfo, rollingData, framerate, going, showPlot, timeInterval, EaMethod\
+                = (simulationParams[i] for i in simulationParamsFields)
+    if len(substance1.willReact) == 2 and substance2 in substance1.willReact and substance1.reactingFrame == frameN: #three-substance reaction
+        substance3 = next(iter(substance1.willReact - {substance2})) #gets substance3 from substance1.willReact
+        newx, newy = (substance1.pos[0][0]+substance2.pos[0][0]+substance3.pos[0][0])/3, (substance1.pos[0][1]+substance2.pos[0][1]+substance3.pos[0][1])/3
+        totalmv = (substance1.mass * substance1.velocity) + (substance2.mass * substance2.velocity) + (substance3.mass * substance3.velocity) #total momentum
+        totalMass = substance1.mass + substance2.mass + substance3.mass
+        reactionCentre = (substance1.mass * np.array(substance1.pos[0]) + substance2.mass * np.array(substance2.pos[0]) + substance3.mass * np.array(substance3.pos[0])) / totalMass
+        reactionSuccessful = 1
+        threeSubstanceReaction = 1
+    elif substance2.willReact == {substance1} and substance2.reactingFrame == frameN: #two-substance reaction
+        newx, newy = (substance1.pos[0][0]+substance2.pos[0][0])/2, (substance1.pos[0][1]+substance2.pos[0][1])/2
+        totalmv = (substance1.mass * substance1.velocity) + (substance2.mass * substance2.velocity)
+        totalMass = substance1.mass + substance2.mass
+        reactionCentre = (substance1.mass * np.array(substance1.pos[0]) + substance2.mass * np.array(substance2.pos[0])) / totalMass
+        reactionSuccessful = 1
+        
+    if reactionSuccessful == 1:
+        productNumber = 0
+        products = [s.strip() for s in substance1.product.split('+') if s.strip()]
+        formedSubstances = []
+        centralAtom = []
+        for product in products:
+            centralAtom.append(next((row["central"] for row in substanceGenInfo if row["formula"] == product), "-")) #finds central atom if present
+        try:
+            productNumber = int(substance1.product[0]) #number of product molecules
+        except:
+            productNumber = len(products)
+        newVelocity = totalmv / (productNumber * totalMass)
+        newSubstanceRecentColl = set()
+        angleStartArgs = [[substance1.pos[0], substance1.velocity], [substance2.pos[0], substance2.velocity]]
+        angleStartPos, rotationDirection = angleStartFunc(angleStartArgs)
+        if productNumber == 1:
+            substanceParams = {"molecule": dict(zip(substanceParamsMoleculeFields, [substance1.product, 0, newx, newy,
+                                                                                    newVelocity[0], newVelocity[1], substanceID, angleStartPos, rotationDirection, frameN,\
+                                                                                    {}, substance1.frameWidth, velocityDisplayScale, centralAtom[0], iterations, "False", boxes]))}
+            substanceParams = getSubstanceAtoms(substanceParams, atomInfo)
+            substanceParams["molecule"]["substanceTypeInSubstances?"] =  any(s.substanceType == substanceParams["molecule"]["substanceType"] for s in substances)               
+            substanceNew = substanceGen(substanceParams)
+            substances.add(substanceNew)
+            substanceID+=1
+            formedSubstances = [substanceNew]
+        if productNumber > 1:
+            vels = []
+            vCom = totalmv / totalMass  #center-of-mass velocity
+            if np.linalg.norm(vCom) == 0:#handle rare case where total momentum is zero — pick random direction
+                perp = np.array([1.0, 0.0])
+            else:
+                perp = np.array([-vCom[1], vCom[0]])  #perpendicular direction (rotate vCom by 90°)
+                perp = perp / np.linalg.norm(perp)  #make it unit vector
+            if threeSubstanceReaction != 1:
+           # v1 = np.array([substance1.velocity[0], substance1.velocity[1]])
+           # v2 = np.array([substance2.velocity[0], substance2.velocity[1]])
+                vRel = substance1.velocity - substance2.velocity #relative velocity of substance1 and substance2
+            else:
+                vRel = substance1.velocity + substance2.velocity + substance3.velocity - (3 * vCom) #vector sum of velocities relative to COM                     
+            speedRel = np.linalg.norm(vRel)
+            vels.append(vCom + 0.5 * speedRel * perp)   #assign velocities
+            vels.append(vCom - 0.5 * speedRel * perp)
+            if productNumber == 2:
+                substanceVectorSeparation = substance1.pos[0] - substance2.pos[0]
+                newSubstancesSeparation, newSubstanceAtomNumber = [substanceVectorSeparation[1]/2, substanceVectorSeparation[0]/2], 2 #separates the two new substances horizontally by this amount (see substanceParams[0][2] below)
+                productPositions = [[newx-newSubstancesSeparation[0],newy-newSubstancesSeparation[0]], [newx+newSubstancesSeparation[0],newy+newSubstancesSeparation[0]]]
+            if productNumber == 3:
+                triangleRadius = 20  #distance from center to each product
+                triangleOffsets = [pg.math.Vector2(triangleRadius, 0), pg.math.Vector2(triangleRadius * math.cos(2 * math.pi / 3), triangleRadius * math.sin(2 * math.pi / 3)),\
+                                   pg.math.Vector2(triangleRadius * math.cos(4 * math.pi / 3), triangleRadius * math.sin(4 * math.pi / 3)),]
+                productPositions = [reactionCentre + offset for offset in triangleOffsets]
+                sepSpeed = 0.33 * np.linalg.norm(vRel)  #tweak factor as needed
+                for offset in triangleOffsets:
+                    offsetArray = np.array([offset.x, offset.y], dtype=float)
+                    if np.linalg.norm(offsetArray) == 0:
+                        directionVector = np.array([1.0, 0.0])  #fallback
+                    else:
+                        directionVector = offsetArray / np.linalg.norm(offsetArray)
+                    velocityRel = sepSpeed * directionVector
+                    velocityActual = velocityRel + vCom  #add COM velocity to get lab-frame
+                    vels.append(velocityActual)
+                
+            substanceParams = {"molecule": dict(zip(substanceParamsMoleculeFields, [products[0], 0, productPositions[0][0], productPositions[0][1], 0, 0, substanceID, angleStartPos, rotationDirection,\
+                                frameN, set(), substance1.frameWidth, velocityDisplayScale, centralAtom[0], iterations, "False", boxes]))}
+            substanceParams = getSubstanceAtoms(substanceParams, atomInfo)
+            for i in range(0, substance1.product.count("+")+1): #for each new substance
+                substanceParams["molecule"]["x"] = productPositions[i][0]
+                substanceParams["molecule"]["y"] = productPositions[i][1]
+                substanceParams["molecule"]["xdir"]=vels[i][0]
+                substanceParams["molecule"]["ydir"]=vels[i][1]
+                if i > 0:
+                    substanceParams = {"molecule": substanceParams["molecule"]}
+                    substanceParams["molecule"]["substanceType"] = products[i]
+                    substanceParams["molecule"]["substanceID"] = substanceID
+                    substanceParams["molecule"]["rotationDirection"] = rotationDirection * -1
+                    substanceParams["molecule"]["recentColl"] = set()
+                    substanceParams["molecule"]["centralAtom"] = centralAtom[i]
+                    substanceParams = getSubstanceAtoms(substanceParams, atomInfo)
+                substanceParams["molecule"]["substanceTypeInSubstances?"] =  any(s.substanceType == substanceParams["molecule"]["substanceType"] for s in substances)
                 substanceNew = substanceGen(substanceParams)
                 substances.add(substanceNew)
+                formedSubstances.append(substanceNew)
                 substanceID+=1
-            if productNumber > 1:
-                vels = []
-                vCom = totalmv / totalMass  #center-of-mass velocity
-                if np.linalg.norm(vCom) == 0:#handle rare case where total momentum is zero — pick random direction
-                    perp = np.array([1.0, 0.0])
-                else:
-                    perp = np.array([-vCom[1], vCom[0]])  #perpendicular direction (rotate vCom by 90°)
-                    perp = perp / np.linalg.norm(perp)  #make it unit vector
-                if threeSubstanceReaction != 1:
-               # v1 = np.array([substance1.velocity[0], substance1.velocity[1]])
-               # v2 = np.array([substance2.velocity[0], substance2.velocity[1]])
-                    vRel = substance1.velocity - substance2.velocity #relative velocity of substance1 and substance2
-                else:
-                    vRel = substance1.velocity + substance2.velocity + substance3.velocity - (3 * vCom) #vector sum of velocities relative to COM                     
-                speedRel = np.linalg.norm(vRel)
-                vels.append(vCom + 0.5 * speedRel * perp)   #assign velocities
-                vels.append(vCom - 0.5 * speedRel * perp)
-                if productNumber == 2:
-                    substanceVectorSeparation = substance1.pos[0] - substance2.pos[0]
-                    newSubstancesSeparation, newSubstanceAtomNumber = [substanceVectorSeparation[1]/2, substanceVectorSeparation[0]/2], 2 #separates the two new substances horizontally by this amount (see substanceParams[0][2] below)
-                    productPositions = [[newx-newSubstancesSeparation[0],newy-newSubstancesSeparation[0]], [newx+newSubstancesSeparation[0],newy+newSubstancesSeparation[0]]]
-                if productNumber == 3:
-                    triangleRadius = 20  #distance from center to each product
-                    triangleOffsets = [pg.math.Vector2(triangleRadius, 0), pg.math.Vector2(triangleRadius * math.cos(2 * math.pi / 3), triangleRadius * math.sin(2 * math.pi / 3)),\
-                                       pg.math.Vector2(triangleRadius * math.cos(4 * math.pi / 3), triangleRadius * math.sin(4 * math.pi / 3)),]
-                    productPositions = [reactionCentre + offset for offset in triangleOffsets]
-                    sepSpeed = 0.33 * np.linalg.norm(vRel)  #tweak factor as needed
-                    for offset in triangleOffsets:
-                        offsetArray = np.array([offset.x, offset.y], dtype=float)
-                        if np.linalg.norm(offsetArray) == 0:
-                            directionVector = np.array([1.0, 0.0])  #fallback
-                        else:
-                            directionVector = offsetArray / np.linalg.norm(offsetArray)
-                        velocityRel = sepSpeed * directionVector
-                        velocityActual = velocityRel + vCom  #add COM velocity to get lab-frame
-                        vels.append(velocityActual)
-                    
-                substanceParams = {"molecule": dict(zip(substanceParamsMoleculeFields, [products[0], 0, productPositions[0][0], productPositions[0][1], 0, 0, substanceID, angleStartPos, rotationDirection,\
-                                    frameN, [substanceID+1], substance1.frameWidth, substanceID+1, velocityDisplayScale, centralAtom[0], iterations, "False"]))}
-                substanceParams = getSubstanceAtoms(substanceParams, atomInfo)
-                for i in range(0, substance1.product.count("+")+1): #for each new substance
-                    substanceParams["molecule"]["x"] = productPositions[i][0]
-                    substanceParams["molecule"]["y"] = productPositions[i][1]
-                    substanceParams["molecule"]["xdir"]=vels[i][0]
-                    substanceParams["molecule"]["ydir"]=vels[i][1]
-                    if i > 0:
-                        substanceParams = {"molecule": substanceParams["molecule"]}
-                        substanceParams["molecule"]["substanceType"] = products[i]
-                        substanceParams["molecule"]["substanceID"] = substanceID
-                        substanceParams["molecule"]["rotationDirection"] = rotationDirection * -1
-                        substanceParams["molecule"]["recentColl"] = [substanceID-1]
-                        substanceParams["molecule"]["productPair"] = [substanceID-1]
-                        substanceParams["molecule"]["centralAtom"] = centralAtom[i]
-                        substanceParams = getSubstanceAtoms(substanceParams, atomInfo)
-                    if substance1.product.count("+") == 2: #three products
-                        allSubstanceIDs = [substanceID, substanceID+1, substanceID+2]
-                        del allSubstanceIDs[i] #remove self from allSubstanceIDs
-                        substanceParams["molecule"][10] = allSubstanceIDs
-                        substanceParams["molecule"][12] = allSubstanceIDs
-                    substanceParams["molecule"]["substanceTypeInSubstances?"] =  any(s.substanceType == substanceParams["molecule"]["substanceType"] for s in substances)
-                    substanceNew = substanceGen(substanceParams)
-                    substances.add(substanceNew)
-                    substanceID+=1
-            substances.remove(substance1)
-            substances.remove(substance2) #other substances will still be iterated in the substance1 loop (as this loop has already started), but these can be ignored using substances.remove() and checking for substances.has
-            if threeSubstanceReaction == 1:
-                substances.remove(substance3)
-                threeSubstanceReaction = 0
-            reactionSuccessful = 0
-            break #stops loop through substance3
-    return substances, substanceID
+        substances.remove(substance1)
+        substances.remove(substance2) #other substances will still be iterated in the substance1 loop (as this loop has already started), but these can be ignored using substances.remove() and checking for substances.has
+        for i, substance in enumerate(formedSubstances):
+            substance.recentColl = set(formedSubstances) - {substance} #removes self when forming recentColl
+        if threeSubstanceReaction == 1:
+            substances.remove(substance3)
+            threeSubstanceReaction = 0
+        reactionSuccessful = 0
+    simulationParams["substances"], simulationParams["substanceID"] = substances, substanceID
 
 def probabilityChecking(substances, reactionInfo, T, EaMethod):
     reactantList = sorted([str(s.substanceType) for s in substances])
@@ -554,90 +589,100 @@ def probabilityChecking(substances, reactionInfo, T, EaMethod):
                     return Ea < ERel #reaction allowed according to probability
     return False  #no valid reaction found
 
-def reactionChecking(substances, frameN, substance1, substance2, toggleReaction,reactionInfo, T, reactionCount, timeInterval, EaMethod): #checks for reactions with >1 molecule
-    if substance1 != substance2:  
-            collDetected = 0
-            for i in range(1, substance1.iterations+2):
-                collDetected = collCheck(substance1, substance2, collDetected)
-                if collDetected == 1 and toggleReaction == True and substance1.willReact == 0 and substance2.willReact == 0 and substance2.substanceID not in substance1.recentColl\
-                   and substance1.substanceID not in substance2.recentColl:
-                        nextReactionAllowed = 0 #valid reaction found, but not yet successful (needs to pass probability check)
-                        reactantList = sorted([substance1.substanceType, substance2.substanceType])
+def reactionChecking(substance1, substance2, T, frameN, reactionCount, box, i, physicalParams, physicalParamsFields, simulationParams, simulationParamsFields): #checks for reactions with >1 molecule
+    dimensions, atomInfo, frameWidth, substanceGenInfo, TStart, avgMr, velocityDisplayScale,\
+                 iterations, substanceParamsMoleculeFields, boxes, grid = (physicalParams[i] for i in physicalParamsFields)
+    substances, toggleReaction, frameN, substanceID, reactionInfo, rollingData, framerate, going, showPlot, timeInterval, EaMethod\
+                = (simulationParams[i] for i in simulationParamsFields)
+    reactionSuccessful2 = False
+
+    if len(substance2.willReact) == 0: #checking for two-substance reactions. already checked (in collisionProcessing) if len(substance1.willReact) == 0
+        nextReactionAllowed = 0 #indicates whether a given reaction is allowed (is in the list of possible reactions), but not yet successful (needs to pass probability check)
+        reactantList = sorted([substance1.substanceType, substance2.substanceType])
+        reactants = "+".join(reactantList)
+        for r in reactionInfo.values():
+            if r["reactants"] == reactants or r["products"] == reactants:
+                if r["reactants"] == reactants: #determine direction of reaction
+                    productString = r["products"]
+                else:
+                    productString = r["reactants"]
+                substance1.product = substance2.product = productString #set products
+                nextReactionAllowed = 1
+                break
+        if nextReactionAllowed == 1: #two-substance reaction allowed
+            reactionSuccessful2 = probabilityChecking([substance1, substance2], reactionInfo, T, EaMethod)
+            if reactionSuccessful2 == True: #two-substance reaction successful
+                substance1.willReact.add(substance2)
+                substance2.willReact.add(substance1)
+                substance2.reactingFrame = frameN + 1
+                reactionCount+=1
+                
+        else: #checking for three-substance reactions if no two-substance reactions were found
+            for k in range(i+2, len(box)): #for each of the remaining substances in the box apart from substance1 and substance2
+                substance3 = box[k]       
+                if substance3 != substance1 and substance3 != substance2:
+                    collDetected, collDetected2 = 0, 0
+                    collDetected = collCheck(substance1, substance3)     #
+                    collDetected2 = collCheck(substance2, substance3)   #checking substance 3 colliding with either substance1 or substance2
+                    if (collDetected == 1 or collDetected2 == 1) and len(substance3.willReact) == 0:
+                        reactantList = sorted([substance1.substanceType, substance2.substanceType, substance3.substanceType])
                         reactants = "+".join(reactantList)
                         for r in reactionInfo.values():
                             if r["reactants"] == reactants or r["products"] == reactants:
-                                if r["reactants"] == reactants: #determine direction of reaction
+                                if r["reactants"] == reactants: #determine direction
                                     productString = r["products"]
                                 else:
                                     productString = r["reactants"]
-                                substance1.product = substance2.product = productString #set products
+                                substance1.product = substance2.product = substance3.product = productString #set products
                                 nextReactionAllowed = 1
                                 break
                         if nextReactionAllowed == 1:
-                            reactionSuccessful2 = probabilityChecking([substance1, substance2], reactionInfo, T, EaMethod)
+                            reactionSuccessful2 = probabilityChecking([substance1, substance2, substance3], reactionInfo, T, EaMethod)
                             if reactionSuccessful2 == True:
-                                substance1.willReact = substance2.substanceID
-                                substance2.willReact = substance1.substanceID
-                                substance2.reactingFrame = frameN + 1
+                                substance1.willReact.update([substance2,substance3])
+                                substance2.willReact.update([substance1,substance3])
+                                substance3.willReact.update([substance2,substance1])
+                                substance1.reactingFrame = substance2.reactingFrame = substance3.reactingFrame = frameN + 1 #specifies that reaction will take place in next frame
                                 reactionCount+=1
-                            break #breaks the iterations loop (so that the probability check only occurs once)
-                                
-                        for substance3 in substances: #checking for three substance reactions
-                            if substance3 != substance1 and substance3 != substance2:
-                                collDetected, collDetected2 = 0, 0
-                                collDetected = collCheck(substance1, substance3, collDetected)     #
-                                collDetected2 = collCheck(substance2, substance3, collDetected)   #checking substance 3 colliding with either substance1 or substance2
-                                if (collDetected == 1 or collDetected2 == 1) and substance3.willReact == 0:
-                                    reactantList = sorted([substance1.substanceType, substance2.substanceType, substance3.substanceType])
-                                    reactants = "+".join(reactantList)
-                                    for r in reactionInfo.values():
-                                        if r["reactants"] == reactants or r["products"] == reactants:
-                                            if r["reactants"] == reactants: #determine direction
-                                                productString = r["products"]
-                                            else:
-                                                productString = r["reactants"]
-                                            substance1.product = substance2.product = substance3.product = productString #set products
-                                            nextReactionAllowed = 1
-                                            break
-                                    if nextReactionAllowed == 1:
-                                        reactionSuccessful2 = probabilityChecking([substance1, substance2, substance3], reactionInfo, T, EaMethod)
-                                        if reactionSuccessful2 == True:
-                                            substance1.willReact = [substance2.substanceID,substance3.substanceID]
-                                            substance2.willReact = [substance1.substanceID,substance3.substanceID]
-                                            substance3.willReact = [substance2.substanceID,substance1.substanceID]
-                                            substance3.reactingFrame = frameN + 1 #specifies that reaction will take place in next frame
-                                            reactionCount+=1
-                                        break
-    return substances, reactionCount
+                            break
+    simulationParams["substances"] = substances
+    return reactionCount, reactionSuccessful2
 
-def collisionProcessing(substances, substance1, substance2, breakLoop):
-        if substance1 != substance2 and substances.has(substance2):
-            collDetected = 0
-            for i in range(1, substance1.iterations+2):
-                collDetected = collCheck(substance1, substance2, collDetected) 
-                if collDetected == 1 and substance2.substanceID not in substance1.currentColl and\
-                   substance2.substanceID not in substance1.recentColl and substance1.substanceID not in\
-                   substance2.recentColl and substance1.willReact == 0: #if this collision hasn't been checked, and substance1 hasn't reacted (need to check both recentColls here)
-                    dV = substance1.reactingPos - substance2.reactingPos #dV = distance vector
-                    v1, v2 = substance1.velocity, substance2.velocity
-                    m1, m2 = substance1.mass, substance2.mass
-                    if np.linalg.norm(dV) == 0: #if normal line between substance is exactly 0 (i.e. a head-on collision)
-                        substance1.velocity = (((m1 - m2) / (m1 + m2)) * (v1)) + (((2 * m2) / (m1 + m2)) * (v2))
-                        substance2.velocity = (((m2 - m1) / (m1 + m2)) * (v2)) + (((2 * m1) / (m1 + m2)) * (v1))
-                    else:
-                        substance1.velocity = v1 - round(dV * (2 * m2 / (m1 + m2)) * np.dot(v1 - v2, dV) / (np.linalg.norm(dV) ** 2), 3) #velocity result rounded to 3dp (currently gives a sufficient level of accuracy)
-                        substance2.velocity = v2 - round(-dV * (2 * m1 / (m1 + m2)) * np.dot(v2 - v1, -dV) / (np.linalg.norm(dV) ** 2), 3)
-                    relPos = substance2.pos[0] - substance1.pos[0]
-                    if (substance1.velocity[0] == 0 and substance1.velocity[1] == 0) or (substance2.velocity[0] == 0 and substance2.velocity == 0):
-                        print("Error" +str(v1)+" "+str(substance1.velocity)+" "+str(v2)+" "+str(substance2.velocity))
-                    substance1.currentColl.append(substance2.substanceID)
-                    substance2.currentColl.append(substance1.substanceID)
-                    substance1.recentColl.append(substance2.substanceID)
-                    substance2.recentColl.append(substance1.substanceID)
-                    breakLoop = 1
-        return substances, breakLoop
+def collisionProcessing(substances, substance1, substance2, breakLoop, T, frameN, reactionCount, box, i, physicalParams, physicalParamsFields,
+                                                                                                       simulationParams, simulationParamsFields):
+    collDetected = collCheck(substance1, substance2)
+    if collDetected == 1 and substance2.substanceID not in substance1.currentColl and\
+       substance2 not in substance1.recentColl and substance1 not in\
+       substance2.recentColl and len(substance1.willReact) == 0: #if this collision hasn't been checked, and substance1 hasn't reacted (need to check both recentColls here)
+        if simulationParams["toggleReaction"] == True:
+            reactionCount, reactionSuccessful2 = reactionChecking(substance1, substance2, T, frameN, reactionCount, box, i, physicalParams, physicalParamsFields, simulationParams, simulationParamsFields)
+        else:
+            reactionSuccessful2 = False
+        if reactionSuccessful2 != True: #if reaction wasn't successful (hence non-reaction collision should be processed)
+            dV = substance1.reactingPos - substance2.reactingPos #dV = distance vector
+            v1, v2 = substance1.velocity, substance2.velocity
+            m1, m2 = substance1.mass, substance2.mass
+            if np.linalg.norm(dV) == 0: #if normal line between substance is exactly 0 (i.e. a head-on collision)
+                substance1.velocity = (((m1 - m2) / (m1 + m2)) * (v1)) + (((2 * m2) / (m1 + m2)) * (v2))
+                substance2.velocity = (((m2 - m1) / (m1 + m2)) * (v2)) + (((2 * m1) / (m1 + m2)) * (v1))
+            else:
+                substance1.velocity = v1 - round(dV * (2 * m2 / (m1 + m2)) * np.dot(v1 - v2, dV) / (np.linalg.norm(dV) ** 2), 3) #velocity result rounded to 3dp (currently gives a sufficient level of accuracy)
+                substance2.velocity = v2 - round(-dV * (2 * m1 / (m1 + m2)) * np.dot(v2 - v1, -dV) / (np.linalg.norm(dV) ** 2), 3)
+            relPos = substance2.pos[0] - substance1.pos[0]
+            if (substance1.velocity[0] == 0 and substance1.velocity[1] == 0) or (substance2.velocity[0] == 0 and substance2.velocity == 0):
+                print("Error" +str(v1)+" "+str(substance1.velocity)+" "+str(v2)+" "+str(substance2.velocity))
+            substance1.currentColl.append(substance2.substanceID)
+            substance2.currentColl.append(substance1.substanceID)
+            substance1.recentColl.add(substance2)
+            substance2.recentColl.add(substance1)
+        breakLoop = 1
+    return substances, breakLoop, reactionCount
 
-def unimolecularReactionProcessing(substances, frameN, substanceID, atomInfo, substance1,reactionSuccessful, velocityDisplayScale, substanceGenInfo, iterations, substanceParamsMoleculeFields):
+def unimolecularReactionProcessing(substance1, physicalParams, physicalParamsFields, simulationParams, simulationParamsFields):
+    dimensions, atomInfo, frameWidth, substanceGenInfo, TStart, avgMr, velocityDisplayScale,\
+                 iterations, substanceParamsMoleculeFields, boxes, grid = (physicalParams[i] for i in physicalParamsFields)
+    substances, toggleReaction, frameN, substanceID, reactionInfo, rollingData, framerate, going, showPlot, timeInterval, EaMethod\
+                = (simulationParams[i] for i in simulationParamsFields) 
     if substance1.willReact == "uni":
         productNumber = 0
         products = [s.strip() for s in substance1.product.split('+') if s.strip()] #gets products from substance1.product
@@ -648,8 +693,9 @@ def unimolecularReactionProcessing(substances, frameN, substanceID, atomInfo, su
             productNumber = int(substance1.product[0]) #number of product molecules
         except:
             productNumber = len(products)
-        newSubstanceRecentColl = []
+        newSubstanceRecentColl = set()
         vels = [] #product velocities
+        formedSubstances = []
         if productNumber > 1:
             theta = np.random.uniform(0, 2*np.pi) #random angle
             randomDirection = np.array([np.cos(theta),np.sin(theta)])
@@ -675,20 +721,24 @@ def unimolecularReactionProcessing(substances, frameN, substanceID, atomInfo, su
                     vels.append(velocityActual)
             for i in range(productNumber): #for each new substance
                 substanceParams = {"molecule": dict(zip(substanceParamsMoleculeFields, [products[i], 0, productPositions[i][0], productPositions[i][1], vels[i][0],
-                                    vels[i][1], substanceID, substance1.angleDisp[0] * 6 / math.pi, substance1.angleDisp[1], frameN, [substanceID+1], substance1.frameWidth, substanceID+1,
-                                    velocityDisplayScale, centralAtom[i], iterations, "False"]))}
-                if i != 0:
-                    substanceParams["molecule"]["productPair"]-=2 #gets substanceID of other product(s)
-                    substanceParams["molecule"]["recentColl"][0]-=2 #gets substanceID of other product(s)
+                                    vels[i][1], substanceID, substance1.angleDisp[0] * 6 / math.pi, substance1.angleDisp[1], frameN, set(), substance1.frameWidth,
+                                    velocityDisplayScale, centralAtom[i], iterations, "False", boxes]))}
                 substanceParams = getSubstanceAtoms(substanceParams, atomInfo)
                 substanceParams["molecule"]["substanceTypeInSubstances?"] =  any(s.substanceType == substanceParams["molecule"]["substanceType"] for s in substances)
                 substanceNew = substanceGen(substanceParams)
+                formedSubstances.append(substanceNew)
                 substances.add(substanceNew)
                 substanceID += 1
         substances.remove(substance1)
-    return substances, substanceID
+        for i, substance in enumerate(formedSubstances):
+            substanceParams["molecule"]["recentColl"] = set(formedSubstances) - {substance}
+    simulationParams["substances"], simulationParams["substanceID"] = substances, substanceID
 
-def unimolecularReactionChecking(reactionInfo, substance1, timeInterval, reactionCount, toggleReaction, frameN):
+def unimolecularReactionChecking(substance1, reactionCount, physicalParams, physicalParamsFields, simulationParams, simulationParamsFields):
+    dimensions, atomInfo, frameWidth, substanceGenInfo, TStart, avgMr, velocityDisplayScale,\
+                 iterations, substanceParamsMoleculeFields, boxes, grid = (physicalParams[i] for i in physicalParamsFields)
+    substances, toggleReaction, frameN, substanceID, reactionInfo, rollingData, framerate, going, showPlot, timeInterval, EaMethod\
+                = (simulationParams[i] for i in simulationParamsFields) 
     for r in reactionInfo.values():
         if (r["reactants"] == substance1.substanceType or r["products"] == substance1.substanceType) and r["k"] != "-":   #if substance1 is a reactant for a unimolecular reaction
             if r["reactants"] == substance1.substanceType: #determine direction
@@ -698,7 +748,7 @@ def unimolecularReactionChecking(reactionInfo, substance1, timeInterval, reactio
                 productString = r["reactants"]
                 k = float(r["k"]) / float(r["K"]) #kBackwards = kForwards / K
             p = 1 - np.exp(-k * timeInterval) #probability of successful reaction
-            if random.random() < p and toggleReaction == True and substance1.willReact == 0: #random.random() < p evaluates the probability
+            if random.random() < p and toggleReaction == True and len(substance1.willReact) == 0: #random.random() < p evaluates the probability
                 substance1.willReact = "uni" #will undergo a unimolecular decomposition reaction
                 substance1.reactingFrame = frameN + 1 #will react in the next frame
                 reactionCount+=1
@@ -706,7 +756,7 @@ def unimolecularReactionChecking(reactionInfo, substance1, timeInterval, reactio
                 break
     return reactionCount
 
-def substanceUpdates(substances, frameN, velocityDisplayScale): #updates the properties (position, angle, recentColl) of each substance in a given frame
+def substanceUpdates(substances, frameN, velocityDisplayScale, boxes, grid): #updates the properties (position, angle, recentColl) of each substance in a given frame
     for substance1 in substances: #need to update positions after all collisions from previous positions have been checked
         substance1.pos[0] = substance1.reactingPos #sets new position on screen to previous reactingPos
         delta = pg.math.Vector2(substance1.velocity[0] * velocityDisplayScale, substance1.velocity[1] * velocityDisplayScale) #vector change in substance1's position on the screen, scaled appropriately by the magnitude of velocityDisplayScale
@@ -726,61 +776,73 @@ def substanceUpdates(substances, frameN, velocityDisplayScale): #updates the pro
             substance1.reactingAtomCentres = [substance1.reactingPos] #if one atom, just give the atom's centre
         substance1.currentColl = [] #substances colliding with substance1 during the current frame
         substance1.rect.center = pg.math.Vector2(round(substance1.pos[0][0]), round(substance1.pos[0][1])) #rounds pos to nearest integer for rect.center
-        substance1.recentCollPrevious.append(copy.deepcopy(substance1.recentColl))
+        substance1.combinedRect = substance1.rect.union(substance1.image.get_rect(center = substance1.reactingPos)) #makes a big rect object covering both the current and next frame positions
+        substance1.currentBoxes = [i for i, box in enumerate(boxes) if substance1.combinedRect.colliderect(box)]
+        for box in substance1.currentBoxes:
+            grid[box].append(substance1)
+        substance1.recentCollPrevious.append(substance1.recentColl.copy())
         if len(substance1.recentCollPrevious) > 10: #if there are more than 10 frames' worth of info in substance1.recentCollPrevious
             del substance1.recentCollPrevious[0] #delete the oldest
-        substanceIDs = {s.substanceID for s in substances}
-        for recentID in substance1.recentColl[:]:  #iterate over a copy to avoid modifying while looping
-            if recentID not in substanceIDs:
-                substance1.recentColl.remove(recentID) #removes substances from substance1.recentColl that no longer exist
-    return substances
+        for recentSubstance in substance1.recentColl.copy():  #iterate over a copy to avoid modifying while looping
+            if recentSubstance not in substances:
+                substance1.recentColl.remove(recentSubstance) #removes substances from substance1.recentColl that no longer exist
+    return substances, grid
 
-def frameProcessing(substances, toggleReaction, frameN, substanceID, atomInfo,reactionInfo, avgMr, rollingData, framerate, substanceGenInfo, going, velocityDisplayScale,\
-                    fig, ax, substanceLines, substanceEnabled, showPlot, timeInterval, EaMethod, iterations, substanceParamsMoleculeFields): #processes each frame
+def frameProcessing(physicalParams, physicalParamsFields, simulationParams, simulationParamsFields, plotParams): #processes each frame
+    dimensions, atomInfo, frameWidth, substanceGenInfo, TStart, avgMr, velocityDisplayScale,\
+                 iterations, substanceParamsMoleculeFields, boxes, grid = (physicalParams[i] for i in physicalParamsFields)
+    substances, toggleReaction, frameN, substanceID, reactionInfo, rollingData, framerate, going, showPlot, timeInterval, EaMethod\
+                = (simulationParams[i] for i in simulationParamsFields)
+    fig, ax, substanceLines, substanceEnabled = plotParams["fig"], plotParams["ax"], plotParams["substanceLines"], plotParams["substanceEnabled"]
     currentVels = [0]
     reactionCount = 0
     for substance1 in substances:
             currentVels.append(round(np.linalg.norm(substance1.velocity), 2))  #norm = magnitude of vector   
     rmsVel = np.sqrt(np.mean(np.square(currentVels))) #root mean square velocity
     T = avgMr * (rmsVel**2) / (2 * R * 1000) # avgMr in g/mol, so dividing by 1000. calculates temperature from 0.5*avgMr*(vrms)^2 = 1.5 * R * T (i.e. 0.5*m*v^2 = 3/2*kB*T)
-    for substance1 in substances:
-        if substances.has(substance1): #checks whether substance1 hasn't reacted during the for loop 
-            reactionSuccessful, threeSubstanceReaction = 0, 0 #note: code processes reactions occuring in this frame before checking for reactions that will occur in the next frame
-            breakLoop = 0
-            for substance2 in substances:
-                if substances.has(substance2):
-                    substances, substanceID = reactionProcessing(substances, frameN, substanceID, atomInfo, substance1, substance2,reactionSuccessful, threeSubstanceReaction, velocityDisplayScale, substanceGenInfo,
-                                                                 iterations, substanceParamsMoleculeFields) #processes reactions from previous frame
-                    substances, reactionCount = reactionChecking(substances, frameN, substance1, substance2, toggleReaction,reactionInfo, T, reactionCount, timeInterval, EaMethod) #checks for reactions with >1 molecule                    
-                substances, breakLoop = collisionProcessing(substances, substance1, substance2, breakLoop) #checks for and processes non-reaction collisions
-                if breakLoop == 1: #loop will be broken if a collision is detected - no need to try and detect any other collisions
-                    break
-            substances, substanceID = unimolecularReactionProcessing(substances, frameN, substanceID, atomInfo, substance1,reactionSuccessful, velocityDisplayScale, substanceGenInfo, iterations, substanceParamsMoleculeFields) #as above, processes unimolecular reactions before checking for them
-            reactionCount = unimolecularReactionChecking(reactionInfo, substance1, timeInterval, reactionCount, toggleReaction, frameN)
+    checked = set()
+    for box in grid.values(): #for each box (this loop checks for substance collisions and reactions)
+        for i in range(len(box)): #for each substance in the box (substance1)
+            substance1 = box[i]
+            if substances.has(substance1):
+                reactionSuccessful, threeSubstanceReaction = 0, 0 #note: code processes reactions occuring in this frame before checking for reactions that will occur in the next frame
+                breakLoop = 0
+                for j in range(i+1, len(box)): #for each of the remaining substances in the box that we'll call substance2 (starting from i+1 to ignore i)
+                    substance2 = box[j]
+                    pair = tuple(sorted((id(substance1), id(substance2))))
+                    if substances.has(substance2) and pair not in checked and bool(set(substance1.currentBoxes) & set(substance2.currentBoxes)): #if substance combo hasn't been checked, and the substances are in overlapping boxes
+                        checked.add(pair)
+                        reactionProcessing(substance1, substance2,reactionSuccessful, threeSubstanceReaction, physicalParams, physicalParamsFields, simulationParams, simulationParamsFields) #processes reactions from previous frame
+                        #reactionCount = reactionChecking(substance1, substance2, T, frameN, reactionCount, physicalParams, physicalParamsFields, simulationParams, simulationParamsFields) #checks for reactions with >1 molecule                    
+                        simulationParams["substances"], breakLoop, reactionCount = collisionProcessing(simulationParams["substances"], substance1, substance2, breakLoop, T, frameN, reactionCount, box, i, physicalParams, physicalParamsFields,
+                                                                                                       simulationParams, simulationParamsFields) #checks for and processes collisions, including reactions with >1 molecule
+                        if breakLoop == 1:
+                            break #collision detected - can skip to next i
+    for substance1 in substances: #processes unimolecular reactions and wall collisions
+        unimolecularReactionProcessing(substance1, physicalParams, physicalParamsFields, simulationParams, simulationParamsFields)
+        reactionCount = unimolecularReactionChecking(substance1, reactionCount, physicalParams, physicalParamsFields, simulationParams, simulationParamsFields)
+        vxDisp = substance1.velocity[0] * velocityDisplayScale
+        vyDisp = substance1.velocity[1] * velocityDisplayScale
+        if substance1.rect.center[0] + vxDisp - substance1.radius < substance1.frameWidth and substance1.velocity[0] < 0: #collision with left wall
+            substance1.velocity[0], substance1.recentColl = -substance1.velocity[0], set() #inverts x velocity, only if the collision with the left wall will start (during this frame), + clears recentColl
+        elif substance1.rect.center[0] + vxDisp + substance1.radius > substance1.screenArea[0] and substance1.velocity[0] > 0: #collision with right wall
+            substance1.velocity[0], substance1.recentColl = -substance1.velocity[0], set()
+        elif substance1.rect.center[1] + vyDisp - substance1.radius < substance1.frameWidth and substance1.velocity[1] < 0: #collision with top wall
+            substance1.velocity[1], substance1.recentColl = -substance1.velocity[1], set()
+        elif substance1.rect.center[1] + vyDisp + substance1.radius > substance1.screenArea[1] and substance1.velocity[1] > 0: #collision with bottom wall
+            substance1.velocity[1], substance1.recentColl = -substance1.velocity[1], set()
+        for substance2 in substance1.recentColl.copy():
+            if bool(set(substance1.currentBoxes) & set(substance2.currentBoxes)): #if substances are in the same box(es)
+                collDetected = collCheck(substance1, substance2)
+                if collDetected == 0: #if no collisions are detected at all during iterations
+                    substance1.recentColl.remove(substance2)
+            else:
+                substance1.recentColl.remove(substance2)
 
-            vxDisp = substance1.velocity[0] * velocityDisplayScale
-            vyDisp = substance1.velocity[1] * velocityDisplayScale
-            if substance1.rect.center[0] + vxDisp - substance1.radius < substance1.frameWidth and substance1.velocity[0] < 0: #collision with left wall
-                substance1.velocity[0], substance1.recentColl = -substance1.velocity[0], [] #inverts x velocity, only if the collision with the left wall will start (during this frame), + clears recentColl
-            elif substance1.rect.center[0] + vxDisp + substance1.radius > substance1.screenArea[0] and substance1.velocity[0] > 0: #collision with right wall
-                substance1.velocity[0], substance1.recentColl = -substance1.velocity[0], []
-            elif substance1.rect.center[1] + vyDisp - substance1.radius < substance1.frameWidth and substance1.velocity[1] < 0: #collision with top wall
-                substance1.velocity[1], substance1.recentColl = -substance1.velocity[1], []
-            elif substance1.rect.center[1] + vyDisp + substance1.radius > substance1.screenArea[1] and substance1.velocity[1] > 0: #collision with bottom wall
-                substance1.velocity[1], substance1.recentColl = -substance1.velocity[1], []
-
-            for substance2 in substances:
-                if substance2.substanceID in substance1.recentColl: #if substance2 is the substance that substance1 has recently collided with
-                    collDetected, collDetectedTotal = 0, 0
-                    for i in range(0, substance1.iterations+2): #needs to start from 0 (contrasting to above) to check for current collisions
-                        collDetected = collCheck(substance1, substance2, collDetected)
-                        collDetectedTotal +=collDetected
-                    if collDetectedTotal == 0 and substance1.recentColl != substance1.productPair:
-                        substance1.recentColl.remove(substance2.substanceID) #removes substance2 from substance1.recentColl if no current collision detected and the two aren't a recently created pair
-
-    substances = substanceUpdates(substances, frameN, velocityDisplayScale)
+    grid = {i: [] for i in range(len(boxes))} #clears grid, before being re-populated within substanceUpdates
+    simulationParams["substances"], physicalParams["grid"] = substanceUpdates(simulationParams["substances"], frameN, velocityDisplayScale, boxes, grid)
     frameEntry = {"Frame": int(frameN), "T (K)": T, "Time (s)": frameN/framerate} #dict to store basic information about the current frame in rollingData
-    for i in substanceGenInfo: #for all substances
+    for i in substanceGenInfo: #for each type of possible substance
         substanceName = i["formula"]
         count = sum(s.substanceType == substanceName for s in substances)
         frameEntry[substanceName] = count
@@ -804,18 +866,7 @@ def frameProcessing(substances, toggleReaction, frameN, substanceID, atomInfo,re
         if times:
             ax.set_xlim(min(times), max(times))
         plt.pause(0.001) #gives time for the window to update without freezing the simulation. The value (0.001–0.1) controls the refresh rate.
-##    if conversion > 20:
-##        avgk = sum(d["k"] for d in rollingData) / (len(rollingData)/framerate)
-##        avgT = sum(d["T"] for d in rollingData) / len(rollingData)
-##        filename = "k_vs_temp.xlsx"
-##        going = False
-##        if os.path.exists(filename):
-##            df = pd.read_excel(filename)
-##        else:
-##            df = pd.DataFrame(columns=["Temperature (K)", "k (s^−1)", "conversion (%)"])
-##        df.loc[len(df)] = [avgT, avgk, conversion]
-##        df.to_excel(filename, index=False)
-    return substanceID, rollingData, going
+    simulationParams["rollingData"], simulationParams["going"], physicalParams["grid"] = rollingData, going, grid
 
 def avgMrFunc(substances): #gets the average Mr of the substances
     totalMass = 0
@@ -971,6 +1022,7 @@ def main():
     windowPos = options.get("Window position")
     x, y = map(int, windowPos.replace(" ", "").split(",")) #replace() used to remove space in windowPos
     os.environ['SDL_VIDEO_WINDOW_POS'] = f"{x},{y}"
+    boxes, grid = [], []
     pg.init() #initiates pygame
     screen = pg.display.set_mode((dimensions, dimensions)) #window dimensions
     outerBackground = pg.Surface(screen.get_size()) #10-pixel width outer background
@@ -984,7 +1036,7 @@ def main():
     
     #main running code
     for atom in atomInfo.values():
-        atom["radius"] *= options.get("Atom size scale factor") #scales up atom sizes as per scale factor
+        atom["radius"] *= options.get("Atom size scale factor") #scales up/down atom sizes as per scale factor
     avgMr = avgMrFromGenInfo(substanceGenInfo, atomInfo)
     TStart = options.get("Starting temperature (K)")
     velocityDisplayScale = options.get("Velocity display scale factor")
@@ -992,11 +1044,17 @@ def main():
     saveInvalidLewisStructures = options.get("Save invalid Lewis structures")
     dSF = options.get("Lewis structure display scale factor")
     substanceParamsMoleculeFields = ["substanceType", "atomNumber", "x", "y", "xdir", "ydir", "substanceID", "angleStartPos",
-                                 "rotationDirection", "frameN", "recentColl", "frameWidth", "productPair", "velocityDisplayScale",
-                                 "centralAtom", "iterations", "substanceTypeInSubstances?"]
-    substances, substanceID = substanceSetup(dimensions, atomInfo, frameWidth, substanceGenInfo, TStart, avgMr, velocityDisplayScale,
-                                             iterations, substanceParamsMoleculeFields) #setup for first frame
-    uniqueSubstances, savedStructures = removeDuplicates(substances), []
+                                 "rotationDirection", "frameN", "recentColl", "frameWidth", "velocityDisplayScale",
+                                 "centralAtom", "iterations", "substanceTypeInSubstances?", "boxes"]
+    physicalParamsFields = ["dimensions", "atomInfo", "frameWidth", "substanceGenInfo", "TStart", "avgMr", "velocityDisplayScale",
+                        "iterations", "substanceParamsMoleculeFields", "boxes", "grid"]
+    simulationParamsFields = ["substances", "toggleReaction", "frameN", "substanceID", "reactionInfo", "rollingData",
+                              "framerate", "going", "showPlot", "timeInterval", "EaMethod"]
+    physicalParams = dict(zip(physicalParamsFields, [dimensions, atomInfo, frameWidth, substanceGenInfo, TStart, avgMr, velocityDisplayScale,
+                                             iterations, substanceParamsMoleculeFields, boxes, grid]))
+    physicalParams["boxes"], physicalParams["grid"] = gridGen(physicalParams, physicalParamsFields) #generates boxes + grid
+    substances, substanceID = substanceSetup(physicalParams, physicalParamsFields) #setup for first frame
+    uniqueSubstances, savedStructures = removeDuplicates(substances), [] #saved as in, saved the Lewis image
     savedStructures = saveLewisStructuresFunc(saveInvalidLewisStructures, uniqueSubstances, outerBackground, screen, dSF, savedStructures)
     outerBackground.fill((0, 0, 0)) #screen fill colour
     screen.blit(outerBackground, (0, 0)) #puts outerBackground on screen
@@ -1014,15 +1072,17 @@ def main():
     pause = 0
     going = True
     browseIndex = 0
+    simulationParams = dict(zip(simulationParamsFields, [substances, toggleReaction, frameN, substanceID, reactionInfo,
+                                            rollingData, framerate, going, showPlot, timeInterval, EaMethod]))
     if showPlot:
         plt.ion()#turn on interactive plots
         handles = []
         labels = []
         fig, ax = plt.subplots()
-        colors = {entry[0]: entry[3] for entry in substanceGenInfo}
-        substanceEnabled = {entry[0]: entry[2] for entry in substanceGenInfo}
-        substanceNames = [entry[0] for entry in substanceGenInfo]
-        substanceLines = {name: ax.plot([], [], label=name, color=colors[name])[0] for name in substanceNames} #graph line for each substance
+        colours = {entry["formula"]: entry["colour"] for entry in substanceGenInfo}
+        substanceEnabled = {entry["formula"]: entry["display"] for entry in substanceGenInfo}
+        substanceNames = [entry["formula"] for entry in substanceGenInfo]
+        substanceLines = {name: ax.plot([], [], label=name, color=colours[name])[0] for name in substanceNames} #graph line for each substance
         N2_eq, O2_eq, NO_eq= 34.15,39.15,51.71 #equilibrium values, to display as below
         #ax.axhline(N2_eq, linestyle='--', color='purple', alpha=0.6, label="N₂ eq")
         #ax.axhline(O2_eq, linestyle='--', color='blue', alpha=0.6, label="O₂ eq")
@@ -1030,27 +1090,33 @@ def main():
         ax.set_xlabel("Time (s)")
         ax.set_ylabel("Molecule count")
         ax.set_title("Live molecule counts")
-        for name, count, display, colour, enabled in substanceGenInfo:
-            if str(display).strip().lower() in ["yes", "true", "1"]:
-                line, = ax.plot(x, y, label=name, color=colour)
+        for substance in substanceGenInfo:
+            if str(substance['display']).strip().lower() in ["yes", "true", "1"]:
+                line, = ax.plot(x, y, label=substance["formula"], color=substance["colour"])
                 handles.append(line)
-                labels.append(name.replace("2", "₂").replace("3", "₃").replace("4", "₄")) #makes subscripts as appropriate
+                labels.append(substance["formula"].replace("2", "₂").replace("3", "₃").replace("4", "₄")) #makes subscripts as appropriate
+##        for formula, count, display, colour, central in substanceGenInfo:
+##            if str(display).strip().lower() in ["yes", "true", "1"]:
+##                line, = ax.plot(x, y, label=formula, color=colour)
+##                handles.append(line)
+##                labels.append(formula.replace("2", "₂").replace("3", "₃").replace("4", "₄")) #makes subscripts as appropriate
         ax.legend(handles, labels, loc = "upper left") #legend placed in upper left
         ax.grid(True)
         #time.sleep(10)
     else:
         fig, ax, substanceLines, substanceEnabled = 0, 0, 0, 0
+    plotParams = dict(zip(["fig", "ax", "substanceLines", "substanceEnabled"], [fig, ax, substanceLines, substanceEnabled]))
 
     clock = pg.time.Clock()
-    while going:
+    while simulationParams["going"]:
         for event in pg.event.get():
             if event.type == pg.QUIT:
-                going = False
+                simulationParams["going"] = False
             if event.type == pg.KEYDOWN: #if a button is pressed
                 if event.key == pg.K_ESCAPE: #if escape key pressed
                     df = pd.DataFrame(rollingData) #stores rollingData in a dataframe, df
                     df.to_excel("substanceCounts.xlsx", index=False)
-                    going = False   #quits simulation
+                    simulationParams["going"] = False   #quits simulation
                     closePlot = 1 #will close the plot automatically as well
                 if event.key == pg.K_p:
                     pause = 1 #will pause when the p key is pressed
@@ -1066,15 +1132,14 @@ def main():
                     if event.key == pg.K_p:
                         pause = 0 #will unpause when the p key is pressed again
         if mode == "simulation":
-            outerBackground.fill((0, 0, 0)) #screen fill colour
+            outerBackground.fill((0, 0, 0)) 
             screen.blit(outerBackground, (0, 0))
             screen.blit(innerBackground, (frameWidth, frameWidth))
             clock.tick(framerate)
-            substanceID, rollingData, going = frameProcessing(substances, toggleReaction, frameN, substanceID, atomInfo, reactionInfo, avgMr, rollingData, framerate, substanceGenInfo, going, velocityDisplayScale, fig, ax,\
-                                                              substanceLines, substanceEnabled, showPlot, timeInterval, EaMethod, iterations, substanceParamsMoleculeFields) #processes current frame
+            frameProcessing(physicalParams, physicalParamsFields, simulationParams, simulationParamsFields, plotParams) #processes current frame
             substances.draw(screen) #draws substances on the screen
             uniqueSubstances = removeDuplicates(substances)
-            savedStructures = saveLewisStructuresFunc(saveInvalidLewisStructures, uniqueSubstances, outerBackground, screen, dSF, savedStructures)
+            savedStructures= saveLewisStructuresFunc(saveInvalidLewisStructures, uniqueSubstances, outerBackground, screen, dSF, savedStructures)
     ##        avgN2 = sum(d["N2"] for d in rollingData) / len(rollingData)
     ##        avgO2 = sum(d["O2"] for d in rollingData) / len(rollingData)
     ##        frameCounts = {
@@ -1083,7 +1148,7 @@ def main():
     ##            "avg_O2": avgO2,
     ##            "avg_k": avgRate}
     ##        outputList.append(frameCounts)
-            frameN+=1
+            simulationParams["frameN"]+=1
         if mode == "Lewis":
             outerBackground.fill((255, 255, 255))
             screen.blit(outerBackground, (0, 0))
@@ -1095,3 +1160,10 @@ if __name__ == "__main__":
     main()
 pg.quit()
 t = 1
+
+#references:
+#pygame examples: https://github.com/Rabbid76/PyGameExamplesAndAnswers/blob/master/documentation/pygame/pygame_collision_and_intesection.md
+#example website: https://phet.colorado.edu/sims/html/gas-properties/latest/gas-properties_all.html
+#collisions: https://stackoverflow.com/questions/29640685/how-do-i-detect-collision-in-pygame
+#collisions 2: https://github.com/rafael-fuente/Ideal-Gas-Simulation-To-Verify-Maxwell-Boltzmann-distribution/blob/master/Ideal%20Gas%20simulation%20code.py
+#angle: https://stackoverflow.com/questions/35176451/python-code-to-calculate-angle-between-three-point-using-their-3d-coordinates
